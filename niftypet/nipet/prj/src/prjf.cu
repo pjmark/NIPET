@@ -201,7 +201,7 @@ __global__ void fprj_oblq(float *sino, const float *im, const float *tt, const u
 }
 
 //--------------------------------------------------------------------------------------------------
-void gpu_fprj(float *prjout, float *im, float *li2rng, short *li2sn, char *li2nos, short *s2c,
+void gpu_fprj(float *d_sn, float *d_im, float *li2rng, short *li2sn, char *li2nos, short *s2c,
               int *aw2ali, float *crs, int *subs, int Nprj, int Naw, int N0crs, Cnst Cnt,
               char att) {
   int dev_id;
@@ -266,23 +266,13 @@ void gpu_fprj(float *prjout, float *im, float *li2rng, short *li2sn, char *li2no
   }
 
   //-----------------------------------------------------------------
-
-  //--- FULLY 3D
-  float *d_sn;
-  HANDLE_ERROR(cudaMalloc(&d_sn, Nprj * snno * sizeof(float)));
-  HANDLE_ERROR(cudaMemset(d_sn, 0, Nprj * snno * sizeof(float)));
-
-  // allocate for image to be forward projected on the device
-  float *d_im;
-  HANDLE_ERROR(cudaMalloc(&d_im, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float)));
-
   // when rings are reduced expand the image to account for whole axial FOV
   if (nvz < SZ_IMZ) {
-    // first the reduced image into the device
+    // copy the reduced image
     float *d_imr;
     HANDLE_ERROR(cudaMalloc(&d_imr, SZ_IMX * SZ_IMY * nvz * sizeof(float)));
     HANDLE_ERROR(
-        cudaMemcpy(d_imr, im, SZ_IMX * SZ_IMY * nvz * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(d_imr, d_im, SZ_IMX * SZ_IMY * nvz * sizeof(float), cudaMemcpyDeviceToDevice));
     // put zeros in the gaps of unused voxels
     HANDLE_ERROR(cudaMemset(d_im, 0, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float)));
     // number of axial row for max threads
@@ -292,10 +282,6 @@ void gpu_fprj(float *prjout, float *im, float *li2rng, short *li2sn, char *li2no
     imExpand<<<BLCK, THRD>>>(d_im, d_imr, vz0, nvz);
     HANDLE_ERROR(cudaGetLastError());
     cudaFree(d_imr);
-  } else {
-    // copy to GPU memory
-    HANDLE_ERROR(
-        cudaMemcpy(d_im, im, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float), cudaMemcpyHostToDevice));
   }
 
   // float *d_li2rng;  HANDLE_ERROR( cudaMalloc(&d_li2rng, N0li*N1li*sizeof(float)) );
@@ -356,17 +342,11 @@ void gpu_fprj(float *prjout, float *im, float *li2rng, short *li2sn, char *li2no
 
   cudaDeviceSynchronize();
 
-  HANDLE_ERROR(cudaMemcpy(prjout, d_sn, Nprj * snno * sizeof(float), cudaMemcpyDeviceToHost));
-
-  cudaFree(d_sn);
-  cudaFree(d_im);
   cudaFree(d_tt);
   cudaFree(d_tv);
   cudaFree(d_subs);
   HANDLE_ERROR(cudaFree(d_crs));
   HANDLE_ERROR(cudaFree(d_s2c));
-
-  return;
 }
 
 //=======================================================================

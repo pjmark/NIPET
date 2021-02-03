@@ -1,6 +1,7 @@
 """Forward and back projector for PET data reconstruction"""
 import logging
 
+import cuvec as cu
 import numpy as np
 
 from .. import mmraux
@@ -43,7 +44,7 @@ def trnx_prj(scanner_params, sino=None, im=None):
 
 
 def frwd_prj(im, scanner_params, isub=ISUB_DEFAULT, dev_out=False, attenuation=False,
-             fullsino_out=True):
+             fullsino_out=True, output=None):
     """
     Calculate forward projection (a set of sinograms) for the provided input image.
     Arguments:
@@ -58,6 +59,7 @@ def frwd_prj(im, scanner_params, isub=ISUB_DEFAULT, dev_out=False, attenuation=F
             is calculated; the default is False, meaning emission sinogram; for attenuation
             calculations (attenuation=True), the exponential of the negative of the integrated
             mu-values along LOR path is taken at the end.
+        output(CuVec, optional) -- output sinogram.
     """
     # Get particular scanner parameters: Constants, transaxial and axial LUTs
     Cnt = scanner_params['Cnt']
@@ -108,21 +110,24 @@ def frwd_prj(im, scanner_params, isub=ISUB_DEFAULT, dev_out=False, attenuation=F
     # predefine the sinogram.
     # if subsets are used then only preallocate those bins which will be used.
     if isub[0] < 0:
-        sinog = np.zeros((txLUT['Naw'], nsinos), dtype=np.float32)
+        out_shape = txLUT['Naw'], nsinos
     else:
-        sinog = np.zeros((len(isub), nsinos), dtype=np.float32)
+        out_shape = len(isub), nsinos
 
+    if output is None:
+        sinog = cu.zeros(out_shape, dtype=np.float32)
+    else:
+        sinog = cu.asarray(output)
+        assert sinog.shape == out_shape
+        assert sinog.dtype == np.dtype('float32')
     # --------------------
-    petprj.fprj(sinog, ims, txLUT, axLUT, isub, Cnt, att)
+    petprj.fprj(sinog.cuvec, cu.asarray(ims).cuvec, txLUT, axLUT, isub, Cnt, att)
     # --------------------
 
     # get the sinogram bins in a full sinogram if requested
-    if fullsino_out:
-        sino = np.zeros((txLUT['Naw'], nsinos), dtype=np.float32)
-        if isub[0] >= 0:
-            sino[isub, :] = sinog
-        else:
-            sino = sinog
+    if fullsino_out and isub[0] >= 0:
+        sino = cu.zeros((txLUT['Naw'], nsinos), dtype=np.float32)
+        sino[isub, :] = sinog
     else:
         sino = sinog
 

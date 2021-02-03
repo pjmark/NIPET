@@ -6,6 +6,7 @@ from collections import namedtuple
 from collections.abc import Iterable
 from numbers import Real
 
+import cuvec as cu
 import numpy as np
 import scipy.ndimage as ndi
 from tqdm.auto import trange
@@ -223,8 +224,10 @@ def osemone(datain, mumaps, hst, scanner_params, recmod=3, itr=4, fwhm=0., psf=N
             asng = attnsino
             log.info('using provided attenuation factor sinogram')
         else:
-            asng = np.zeros(psng.shape, dtype=np.float32)
-            petprj.fprj(asng, mus, txLUT, axLUT, np.array([-1], dtype=np.int32), Cnt, 1)
+            asng = cu.zeros(psng.shape, dtype=np.float32)
+            petprj.fprj(asng.cuvec,
+                        cu.asarray(mus).cuvec, txLUT, axLUT, np.array([-1], dtype=np.int32), Cnt,
+                        1)
     # > combine attenuation and normalisation
     ansng = asng * nsng
     # ========================================================================

@@ -9,6 +9,15 @@ cmake_policy(SET CMP0074 NEW)  # <PackageName>_ROOT hints for find_package
 cmake_policy(SET CMP0104 NEW)  # CMAKE_CUDA_ARCHITECTURES
 find_package(Python3 COMPONENTS Interpreter Development NumPy REQUIRED)
 find_package(CUDAToolkit REQUIRED)
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" -c "import cuvec; print(cuvec.include_path)"
+  OUTPUT_VARIABLE CUVEC_INCLUDE_DIRS
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+if("${CUVEC_INCLUDE_DIRS}" STREQUAL "")
+  message(WARNING "Could not find cuvec includes")
+else()
+  message(STATUS "Found cuvec includes: ${CUVEC_INCLUDE_DIRS}")
+endif()
 if(SKBUILD)
   find_package(PythonExtensions REQUIRED)
   set(LIB_TYPE "MODULE")
@@ -23,6 +32,11 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "")
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+option(CUVEC_DEBUG "Print out CUDA malloc & free operations" OFF)
+if(CUVEC_DEBUG)
+  add_compile_definitions(CUVEC_DEBUG)
+endif(CUVEC_DEBUG)
+message(STATUS "cuvec debugging: ${CUVEC_DEBUG}")
 if("${NIPET_CU_THREADS}" STREQUAL "")
   set(NIPET_CU_THREADS 1024 CACHE STRING
     "Maximum number of CUDA threads per block (should be less than cudaDeviceProp::maxThreadsDim)" FORCE)

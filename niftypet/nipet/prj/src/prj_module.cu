@@ -11,6 +11,7 @@ Copyrights: 2019
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION // NPY_API_VERSION
 
 #include "def.h"
+#include "pycuvec.cuh"
 #include <Python.h>
 #include <numpy/arrayobject.h>
 #include <stdlib.h>
@@ -242,21 +243,21 @@ static PyObject *frwd_prj(PyObject *self, PyObject *args) {
   PyObject *o_txLUT;
 
   // input image to be forward projected  (reshaped for GPU execution)
-  PyObject *o_im;
+  PyCuVec<float> *o_im;
 
   // subsets for OSEM, first the default
   PyObject *o_subs;
 
   // output projection sino
-  PyObject *o_prjout;
+  PyCuVec<float> *o_prjout;
 
   // flag for attenuation factors to be found based on mu-map; if 0 normal emission projection is
   // used
   int att;
   //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   /* Parse the input tuple */
-  if (!PyArg_ParseTuple(args, "OOOOOOi", &o_prjout, &o_im, &o_txLUT, &o_axLUT, &o_subs, &o_mmrcnst,
-                        &att))
+  if (!PyArg_ParseTuple(args, "OOOOOOi", (PyObject **)&o_prjout, (PyObject **)&o_im, &o_txLUT,
+                        &o_axLUT, &o_subs, &o_mmrcnst, &att))
     return NULL;
   //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -301,23 +302,16 @@ static PyObject *frwd_prj(PyObject *self, PyObject *args) {
 
   p_aw2ali = (PyArrayObject *)PyArray_FROM_OTF(pd_aw2ali, NPY_INT32, NPY_ARRAY_IN_ARRAY);
 
-  // image object
-  PyArrayObject *p_im = NULL;
-  p_im = (PyArrayObject *)PyArray_FROM_OTF(o_im, NPY_FLOAT32, NPY_ARRAY_IN_ARRAY);
-
   // subsets if using e.g., OSEM
   PyArrayObject *p_subs = NULL;
   p_subs = (PyArrayObject *)PyArray_FROM_OTF(o_subs, NPY_INT32, NPY_ARRAY_IN_ARRAY);
 
-  // output sino object
-  PyArrayObject *p_prjout = NULL;
-  p_prjout = (PyArrayObject *)PyArray_FROM_OTF(o_prjout, NPY_FLOAT32, NPY_ARRAY_INOUT_ARRAY2);
   //--
 
   /* If that didn't work, throw an exception. */
   if (p_li2rno == NULL || p_li2sn == NULL || p_li2sn1 == NULL || p_li2nos == NULL ||
-      p_aw2ali == NULL || p_s2c == NULL || p_im == NULL || p_crs == NULL || p_subs == NULL ||
-      p_prjout == NULL || p_li2rng == NULL) {
+      p_aw2ali == NULL || p_s2c == NULL || !o_im || p_crs == NULL || p_subs == NULL || !o_prjout ||
+      p_li2rng == NULL) {
     // axLUTs
     Py_XDECREF(p_li2rno);
     Py_XDECREF(p_li2sn);
@@ -330,15 +324,8 @@ static PyObject *frwd_prj(PyObject *self, PyObject *args) {
     // sino 2 crystals
     Py_XDECREF(p_s2c);
     Py_XDECREF(p_crs);
-    // image object
-    Py_XDECREF(p_im);
     // subset definition object
     Py_XDECREF(p_subs);
-
-    // output sino object
-    PyArray_DiscardWritebackIfCopy(p_prjout);
-    Py_XDECREF(p_prjout);
-
     return NULL;
   }
 
@@ -354,11 +341,10 @@ static PyObject *frwd_prj(PyObject *self, PyObject *args) {
   char *li2nos = (char *)PyArray_DATA(p_li2nos);
   float *li2rng = (float *)PyArray_DATA(p_li2rng);
   float *crs = (float *)PyArray_DATA(p_crs);
-  float *im = (float *)PyArray_DATA(p_im);
 
   if (Cnt.LOG <= LOGDEBUG)
-    printf("i> forward-projection image dimensions: %ld, %ld, %ld\n", PyArray_DIM(p_im, 0),
-           PyArray_DIM(p_im, 1), PyArray_DIM(p_im, 2));
+    printf("i> forward-projection image dimensions: %ld, %ld, %ld\n", o_im->shape[0],
+           o_im->shape[1], o_im->shape[2]);
 
   int Nprj = PyArray_DIM(p_subs, 0);
   int N0crs = PyArray_DIM(p_crs, 0);
@@ -382,14 +368,12 @@ static PyObject *frwd_prj(PyObject *self, PyObject *args) {
     subs = subs_;
   }
 
-  // output projection sinogram
-  float *prjout = (float *)PyArray_DATA(p_prjout);
-
   // sets the device on which to calculate
   HANDLE_ERROR(cudaSetDevice(Cnt.DEVID));
 
   //<><><><><><><<><><><><><><><><><><><><><><><><><<><><><><><><><><><><><><><><><><><><<><><><><><><><><><><>
-  gpu_fprj(prjout, im, li2rng, li2sn, li2nos, s2c, aw2ali, crs, subs, Nprj, Naw, N0crs, Cnt, att);
+  gpu_fprj(o_prjout->vec.data(), o_im->vec.data(), li2rng, li2sn, li2nos, s2c, aw2ali, crs, subs,
+           Nprj, Naw, N0crs, Cnt, att);
   //<><><><><><><><<><><><><><><><><><><><><><><><><<><><><><><><><><><><><><><><><><><><<><><><><><><><><><><>
 
   // Clean up
@@ -401,11 +385,7 @@ static PyObject *frwd_prj(PyObject *self, PyObject *args) {
   Py_DECREF(p_aw2ali);
   Py_DECREF(p_s2c);
   Py_DECREF(p_crs);
-  Py_DECREF(p_im);
   Py_DECREF(p_subs);
-
-  PyArray_ResolveWritebackIfCopy(p_prjout);
-  Py_DECREF(p_prjout);
 
   if (subs_[0] == -1) free(subs);
 

@@ -6,6 +6,7 @@ import os
 import time
 from math import pi
 
+import cuvec as cu
 import nibabel as nib
 import numpy as np
 import scipy.ndimage as ndi
@@ -567,8 +568,9 @@ def vsm(
     # <<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>><<+>>
     currentspan = Cnt['SPN']
     Cnt['SPN'] = 1
-    atto = np.zeros((txLUT['Naw'], Cnt['NSN1']), dtype=np.float32)
-    petprj.fprj(atto, mu_sctonly, txLUT, axLUT, np.array([-1], dtype=np.int32), Cnt, 1)
+    atto = cu.zeros((txLUT['Naw'], Cnt['NSN1']), dtype=np.float32)
+    petprj.fprj(atto.cuvec,
+                cu.asarray(mu_sctonly).cuvec, txLUT, axLUT, np.array([-1], dtype=np.int32), Cnt, 1)
     atto = mmraux.putgaps(atto, txLUT, Cnt)
     # --------------------------------------------------------------
     # > get norm components setting the geometry and axial to ones

@@ -199,10 +199,10 @@ def back_prj(sino, scanner_params, isub=ISUB_DEFAULT, dev_out=False):
         nvz = Cnt['rSZ_IMZ']
     else:
         nvz = Cnt['SZ_IMZ']
-    bimg = np.zeros((Cnt['SZ_IMX'], Cnt['SZ_IMY'], nvz), dtype=np.float32)
+    bimg = cu.zeros((Cnt['SZ_IMX'], Cnt['SZ_IMY'], nvz), dtype=np.float32)
 
     # > run back-projection
-    petprj.bprj(bimg, sinog, txLUT, axLUT, isub, Cnt)
+    petprj.bprj(bimg.cuvec, cu.asarray(sinog).cuvec, txLUT, axLUT, isub, Cnt)
 
     if not dev_out:
         # > change from GPU optimised image dimensions to the standard Siemens shape

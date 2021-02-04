@@ -411,17 +411,18 @@ static PyObject *back_prj(PyObject *self, PyObject *args) {
   PyObject *o_txLUT;
 
   // sino to be back projected to image (both reshaped for GPU execution)
-  PyObject *o_sino;
+  PyCuVec<float> *o_sino;
 
   // subsets for OSEM, first the default
   PyObject *o_subs;
 
   // output backprojected image
-  PyObject *o_bimg;
+  PyCuVec<float> *o_bimg;
 
   //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   /* Parse the input tuple */
-  if (!PyArg_ParseTuple(args, "OOOOOO", &o_bimg, &o_sino, &o_txLUT, &o_axLUT, &o_subs, &o_mmrcnst))
+  if (!PyArg_ParseTuple(args, "OOOOOO", (PyObject **)&o_bimg, (PyObject **)&o_sino, &o_txLUT,
+                        &o_axLUT, &o_subs, &o_mmrcnst))
     return NULL;
   //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -466,23 +467,15 @@ static PyObject *back_prj(PyObject *self, PyObject *args) {
 
   p_aw2ali = (PyArrayObject *)PyArray_FROM_OTF(pd_aw2ali, NPY_INT32, NPY_ARRAY_IN_ARRAY);
 
-  // sino object
-  PyArrayObject *p_sino = NULL;
-  p_sino = (PyArrayObject *)PyArray_FROM_OTF(o_sino, NPY_FLOAT32, NPY_ARRAY_IN_ARRAY);
-
   // subsets if using e.g., OSEM
   PyArrayObject *p_subs = NULL;
   p_subs = (PyArrayObject *)PyArray_FROM_OTF(o_subs, NPY_INT32, NPY_ARRAY_IN_ARRAY);
-
-  // output back-projection image
-  PyArrayObject *p_bim = NULL;
-  p_bim = (PyArrayObject *)PyArray_FROM_OTF(o_bimg, NPY_FLOAT32, NPY_ARRAY_INOUT_ARRAY2);
   //--
 
   /* If that didn't work, throw an exception. */
   if (p_li2rno == NULL || p_li2sn == NULL || p_li2sn1 == NULL || p_li2nos == NULL ||
-      p_aw2ali == NULL || p_s2c == NULL || p_sino == NULL || p_crs == NULL || p_subs == NULL ||
-      p_li2rng == NULL || p_bim == NULL) {
+      p_aw2ali == NULL || p_s2c == NULL || !o_sino || p_crs == NULL || p_subs == NULL ||
+      p_li2rng == NULL || !o_bimg) {
     // axLUTs
     Py_XDECREF(p_li2rno);
     Py_XDECREF(p_li2sn);
@@ -495,14 +488,8 @@ static PyObject *back_prj(PyObject *self, PyObject *args) {
     // sino 2 crystals
     Py_XDECREF(p_s2c);
     Py_XDECREF(p_crs);
-    // sino object
-    Py_XDECREF(p_sino);
     // subset definition object
     Py_XDECREF(p_subs);
-
-    // back-projection image
-    PyArray_DiscardWritebackIfCopy(p_bim);
-    Py_XDECREF(p_bim);
 
     return NULL;
   }
@@ -519,7 +506,6 @@ static PyObject *back_prj(PyObject *self, PyObject *args) {
   char *li2nos = (char *)PyArray_DATA(p_li2nos);
   float *li2rng = (float *)PyArray_DATA(p_li2rng);
   float *crs = (float *)PyArray_DATA(p_crs);
-  float *sino = (float *)PyArray_DATA(p_sino);
 
   int Nprj = PyArray_DIM(p_subs, 0);
   int N0crs = PyArray_DIM(p_crs, 0);
@@ -540,17 +526,16 @@ static PyObject *back_prj(PyObject *self, PyObject *args) {
     subs = subs_;
   }
 
-  float *bimg = (float *)PyArray_DATA(p_bim);
-
   if (Cnt.LOG <= LOGDEBUG)
-    printf("i> back-projection image dimensions: %ld, %ld, %ld\n", PyArray_DIM(p_bim, 0),
-           PyArray_DIM(p_bim, 1), PyArray_DIM(p_bim, 2));
+    printf("i> back-projection image dimensions: %ld, %ld, %ld\n", o_bimg->shape[0],
+           o_bimg->shape[1], o_bimg->shape[2]);
 
   // sets the device on which to calculate
   HANDLE_ERROR(cudaSetDevice(Cnt.DEVID));
 
   //<><><<><><><><><><><><><><><><><><><><><<><><><><<><><><><><><><><><><><><><><><><><<><><><><><><>
-  gpu_bprj(bimg, sino, li2rng, li2sn, li2nos, s2c, aw2ali, crs, subs, Nprj, Naw, N0crs, Cnt);
+  gpu_bprj(o_bimg->vec.data(), o_sino->vec.data(), li2rng, li2sn, li2nos, s2c, aw2ali, crs, subs,
+           Nprj, Naw, N0crs, Cnt);
   //<><><><><><><><><><><>><><><><><><><><><<><><><><<><><><><><><><><><><><><><><><><><<><><><><><><>
 
   // Clean up
@@ -562,11 +547,7 @@ static PyObject *back_prj(PyObject *self, PyObject *args) {
   Py_DECREF(p_aw2ali);
   Py_DECREF(p_s2c);
   Py_DECREF(p_crs);
-  Py_DECREF(p_sino);
   Py_DECREF(p_subs);
-
-  PyArray_ResolveWritebackIfCopy(p_bim);
-  Py_DECREF(p_bim);
 
   if (subs_[0] == -1) free(subs);
 

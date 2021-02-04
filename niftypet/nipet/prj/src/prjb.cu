@@ -184,7 +184,7 @@ __global__ void bprj_oblq(const float *sino, float *im, const float *tt, const u
 }
 
 //--------------------------------------------------------------------------------------------------
-void gpu_bprj(float *bimg, float *sino, float *li2rng, short *li2sn, char *li2nos, short *s2c,
+void gpu_bprj(float *d_im, float *d_sino, float *li2rng, short *li2sn, char *li2nos, short *s2c,
               int *aw2ali, float *crs, int *subs, int Nprj, int Naw, int N0crs, Cnst Cnt) {
 
   int dev_id;
@@ -249,14 +249,13 @@ void gpu_bprj(float *bimg, float *sino, float *li2rng, short *li2sn, char *li2no
   }
   //-----------------------------------------------------------------
 
-  //--- FULLY 3D sino <d_sino> to be back-projected to image <d_im>
-  float *d_sino;
-  HANDLE_ERROR(cudaMalloc(&d_sino, Nprj * snno * sizeof(float)));
-  HANDLE_ERROR(cudaMemcpy(d_sino, sino, Nprj * snno * sizeof(float), cudaMemcpyHostToDevice));
-
-  float *d_im;
-  HANDLE_ERROR(cudaMalloc(&d_im, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float)));
-  HANDLE_ERROR(cudaMemset(d_im, 0, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float)));
+  float *d_imf;
+  // when rings are reduced
+  if (nvz < SZ_IMZ)
+    HANDLE_ERROR(cudaMalloc(&d_imf, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float)));
+  else
+    d_imf = d_im;
+  HANDLE_ERROR(cudaMemset(d_imf, 0, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float)));
   //---
 
   cudaMemcpyToSymbol(c_li2rng, li2rng, nil2r_c * sizeof(float2));
@@ -275,7 +274,7 @@ void gpu_bprj(float *bimg, float *sino, float *li2rng, short *li2sn, char *li2no
   //-----------------------------------------------------------------------
 
   //============================================================================
-  bprj_drct<<<Nprj, nrng_c>>>(d_sino, d_im, d_tt, d_tv, d_subs, snno);
+  bprj_drct<<<Nprj, nrng_c>>>(d_sino, d_imf, d_tt, d_tv, d_subs, snno);
   HANDLE_ERROR(cudaGetLastError());
   //============================================================================
 
@@ -295,26 +294,16 @@ void gpu_bprj(float *bimg, float *sino, float *li2rng, short *li2sn, char *li2no
   // cudaMemPrefetchAsync(d_sino, Nprj*snno * sizeof(float), nDevices, NULL);
 
   if (Cnt.SPN == 1 && Noblq <= 1024) {
-    bprj_oblq<<<Nprj, Noblq>>>(d_sino, d_im, d_tt, d_tv, d_subs, snno, zoff);
+    bprj_oblq<<<Nprj, Noblq>>>(d_sino, d_imf, d_tt, d_tv, d_subs, snno, zoff);
     HANDLE_ERROR(cudaGetLastError());
   } else {
-    bprj_oblq<<<Nprj, NSINOS / 4>>>(d_sino, d_im, d_tt, d_tv, d_subs, snno, zoff);
+    bprj_oblq<<<Nprj, NSINOS / 4>>>(d_sino, d_imf, d_tt, d_tv, d_subs, snno, zoff);
     HANDLE_ERROR(cudaGetLastError());
     zoff += NSINOS / 4;
-    bprj_oblq<<<Nprj, NSINOS / 4>>>(d_sino, d_im, d_tt, d_tv, d_subs, snno, zoff);
+    bprj_oblq<<<Nprj, NSINOS / 4>>>(d_sino, d_imf, d_tt, d_tv, d_subs, snno, zoff);
     HANDLE_ERROR(cudaGetLastError());
   }
   //============================================================================
-
-  cudaEventRecord(stop, 0);
-  cudaEventSynchronize(stop);
-  float elapsedTime;
-  cudaEventElapsedTime(&elapsedTime, start, stop);
-  cudaEventDestroy(start);
-  cudaEventDestroy(stop);
-  if (Cnt.LOG <= LOGDEBUG) printf("DONE in %fs.\n", 0.001 * elapsedTime);
-
-  cudaDeviceSynchronize();
 
   // // the actual axial size used (due to the customised ring subset used)
   // int vz0 = 2*Cnt.RNG_STRT;
@@ -324,36 +313,30 @@ void gpu_bprj(float *bimg, float *sino, float *li2rng, short *li2sn, char *li2no
 
   // when rings are reduced
   if (nvz < SZ_IMZ) {
-    float *d_imr;
-    HANDLE_ERROR(cudaMalloc(&d_imr, SZ_IMX * SZ_IMY * nvz * sizeof(float)));
-    HANDLE_ERROR(cudaMemset(d_imr, 0, SZ_IMX * SZ_IMY * nvz * sizeof(float)));
     // number of axial row for max threads
     int nar = NIPET_CU_THREADS / nvz;
     dim3 THRD(nvz, nar, 1);
     dim3 BLCK((SZ_IMY + nar - 1) / nar, SZ_IMX, 1);
-    imReduce<<<BLCK, THRD>>>(d_imr, d_im, vz0, nvz);
+    imReduce<<<BLCK, THRD>>>(d_im, d_imf, vz0, nvz);
     HANDLE_ERROR(cudaGetLastError());
-    // copy to host memory
-    HANDLE_ERROR(
-        cudaMemcpy(bimg, d_imr, SZ_IMX * SZ_IMY * nvz * sizeof(float), cudaMemcpyDeviceToHost));
-    cudaFree(d_im);
-    cudaFree(d_imr);
+    HANDLE_ERROR(cudaFree(d_imf));
     if (Cnt.LOG <= LOGDEBUG) printf("i> reduced the axial (z) image size to %d\n", nvz);
-  } else {
-    // copy to host memory
-    HANDLE_ERROR(
-        cudaMemcpy(bimg, d_im, SZ_IMX * SZ_IMY * SZ_IMZ * sizeof(float), cudaMemcpyDeviceToHost));
-    cudaFree(d_im);
   }
 
-  cudaFree(d_sino);
-  cudaFree(d_tt);
-  cudaFree(d_tv);
-  cudaFree(d_subs);
-  cudaFree(d_crs);
-  cudaFree(d_s2c);
+  cudaEventRecord(stop, 0);
+  cudaEventSynchronize(stop);
+  // cudaDeviceSynchronize();
+  float elapsedTime;
+  cudaEventElapsedTime(&elapsedTime, start, stop);
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  if (Cnt.LOG <= LOGDEBUG) printf("DONE in %fs.\n", 0.001 * elapsedTime);
 
-  return;
+  HANDLE_ERROR(cudaFree(d_tt));
+  HANDLE_ERROR(cudaFree(d_tv));
+  HANDLE_ERROR(cudaFree(d_subs));
+  HANDLE_ERROR(cudaFree(d_crs));
+  HANDLE_ERROR(cudaFree(d_s2c));
 }
 
 //=======================================================================

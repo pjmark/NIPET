@@ -1,6 +1,7 @@
 """Simulations for image reconstruction with recommended reduced axial field of view"""
 import logging
 
+import cuvec as cu
 import numpy as np
 from scipy import ndimage as ndi
 from tqdm.auto import trange
@@ -250,6 +251,7 @@ def simulate_recon(
 
         # > init sensitivity images for each subset
         sim = np.zeros((Sn, Cnt['SZ_IMY'], Cnt['SZ_IMX'], Cnt['SZ_IMZ']), dtype=np.float32)
+        tmpsim = cu.zeros((Cnt['SZ_IMY'], Cnt['SZ_IMX'], Cnt['SZ_IMZ']), dtype=np.float32)
 
         for n in trange(Sn, desc="sensitivity", leave=log.getEffectiveLevel() < logging.INFO):
             # first number of projection for the given subset
@@ -257,9 +259,12 @@ def simulate_recon(
             sinoTIdx[n, 1:], s = mmrrec.get_subsets14(n, scanner_params)
 
             # > sensitivity image
-            petprj.bprj(sim[n, :, :, :], attsino[sinoTIdx[n, 1:], :], txLUT, axLUT,
+            petprj.bprj(tmpsim.cuvec,
+                        cu.asarray(attsino[sinoTIdx[n, 1:], :]).cuvec, txLUT, axLUT,
                         sinoTIdx[n, 1:], Cnt)
-            # -------------------------------------
+            sim[n] = tmpsim
+        del tmpsim
+        # -------------------------------------
 
         for _ in trange(nitr, desc="OSEM", disable=log.getEffectiveLevel() > logging.INFO,
                         leave=log.getEffectiveLevel() < logging.INFO):

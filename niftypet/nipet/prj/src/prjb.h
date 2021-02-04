@@ -7,7 +7,7 @@
 #define PRJB_H
 
 // used from Python
-void gpu_bprj(float *bimg, float *sino, float *li2rng, short *li2sn, char *li2nos, short *s2c,
+void gpu_bprj(float *d_im, float *d_sino, float *li2rng, short *li2sn, char *li2nos, short *s2c,
               int *aw2ali, float *crs, int *subs, int Nprj, int Naw, int N0crs, Cnst Cnt);
 
 // to be used within CUDA C reconstruction
